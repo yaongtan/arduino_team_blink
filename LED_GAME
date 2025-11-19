@@ -1,0 +1,63 @@
+int led_pins[] = { 8, 9, 10, 11 };
+int button_pins[] = { 14, 15, 16, 17 };
+int ifbuttons[] = { 0, 0, 0, 0 };
+
+int sequence[1024];
+int my_button_click[1024];
+int sequence_num = 8;
+
+void make_random_sequence(int num) {
+  for (int i = 0; i < num; i++) {
+    sequence[i] = random(1, 5);
+  }
+  return;
+}
+
+unsigned long time_current, time_previous = 0;
+int interval = 2000;
+bool per_time_interval(){
+  time_current = millis();
+  if (time_current - time_previous >= interval) {
+    time_previous = time_current;
+    return true;
+  }
+  return false;
+}
+
+bool button_ifclicked(int i) {
+  if (digitalRead(button_pins[i])) {
+    if (!ifbuttons[i]++)
+      return true;
+    delay(50);
+  } else ifbuttons[i] = 0;
+  return false;
+}
+
+int* psequence = sequence;
+int led_pins_from_sequence(){
+  if (*psequence)
+    return led_pins[*psequence++ - 1];
+  return 0;
+}
+
+void setup() {
+  Serial.begin(9600);
+  randomSeed(analogRead(0));
+  make_random_sequence(sequence_num);
+
+  for (int i = 0;i<sequence_num;i++)
+    Serial.print(sequence[i]);
+  Serial.println();
+
+  for (int i = 0; i < 4; i++) {
+    pinMode(led_pins[i], OUTPUT);
+    pinMode(button_pins[i], INPUT);
+  }
+}
+
+//기본 시스템은 마무리했고 led 구현중
+void loop() {
+  if (per_time_interval()){
+    (led_pins_from_sequence())
+  }
+}
