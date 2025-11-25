@@ -3,9 +3,10 @@ int button_pins[] = { 14, 15, 16, 17 };
 int ifbuttons[] = { 0, 0, 0, 0 };
 
 //LED 순서와 버튼 클릭 순서 기록을 위한 변수
-int sequence[1024];
-int my_button_click[1024];
-int sequence_num = 8;
+int sequence[256];
+int my_button_click[256];
+int* p = my_button_click;
+int sequence_num = 10;
 
 //delay를 사용할 시, 센서 감지, 연산 등에서 오류 발생 가능성이 많기에
 //TIMER 구조체를 따로 생성하여 사용함
@@ -20,7 +21,7 @@ struct Timer {
 };
 
 //interval에 해당하는 초 마다 true를 반환하는 함수(struct(구조체)를 이용하여 각각의 previous를 독립적으로 연산함)
-bool per_time_interval(Timer &t) {
+bool per_time_interval(Timer& t) {
   int time_current = millis();
   if (time_current - t.previous >= t.interval) {
     t.previous = time_current;
@@ -65,33 +66,62 @@ void setup() {
   Serial.begin(9600);
   randomSeed(analogRead(0));
   make_random_sequence(sequence_num);
-
+  /*
   Serial.println();
   for (int i = 0; i < sequence_num; i++)
     Serial.print(sequence[i]);
   Serial.println();
-  
+*/
   for (int i = 0; i < 4; i++) {
     pinMode(led_pins[i], OUTPUT);
     pinMode(button_pins[i], INPUT);
   }
 
-  delay(1000); //시작 전 딜레이 추후 삭제 예정 
+  delay(1000);  //시작 전 딜레이 추후 삭제 예정
 }
 
 //TIMER 생성(LED 출력 주기와 켜진 이후 꺼질 때까지의 딜레이 2개)
 // 추후 가장 적합한 딜레이로 수정 예정
-Timer led_timer1(0, 800);
-Timer led_timer2(0, 500);
+Timer led_timer1(0, 700);
+Timer led_timer2(0, 400);
+Timer button_timer1(0, 10000);
 
 // 메인 루프
+//3121 = 11 9 10 9
 int onoff = 0;
+int finish = 0;
 void loop() {
+  if (finish) {
+    for (int i = 0; i < 4; i++) {
+      if (button_ifclicked(i)) {
+        *p++ = i + 1;
+      }
+    }
+    if (per_time_interval(button_timer1)) {
+      Serial.println("-----------------------------");
+      for (int i = 0; i < sequence_num; i++)
+        Serial.print(sequence[i]);
+      Serial.println();
+      Serial.println("finish");
+      for (int i = 0; i < sequence_num; i++) {
+        Serial.print(my_button_click[i]);
+      }
+      Serial.println();
+      Serial.println("-----------------------------");
+      delay(1000000);
+    }
+  }
   if (per_time_interval(led_timer1)) {
-    led_onoff(led_pins_from_sequence());
+    int pin = led_pins_from_sequence();
+    if (pin) {  //종료 조건
+      finish = 1;
+      button_timer1.previous = millis();
+    }
+    led_onoff(pin);
     onoff = 1;
     led_timer2.previous = millis();
   }
+
   if (onoff)
     if (per_time_interval(led_timer2)) {
       led_onoff(0);
