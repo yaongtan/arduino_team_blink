@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLINK_web service</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { 
+            background-color: #f4f7f6; 
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            color: #333; 
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 20px; font-size: 1.8rem; }
+
+        /* 1. 진단 메시지 카드 */
+        .diagnosis-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            margin-bottom: 30px;
+            border-left: 10px solid #ccc;
+            transition: all 0.3s ease;
+        }
+        .diagnosis-title { font-size: 1.6em; font-weight: bold; margin-bottom: 10px; }
+        .diagnosis-text { font-size: 1.1em; line-height: 1.6; color: #555; }
+        .recommendation { 
+            margin-top: 15px; 
+            padding: 15px; 
+            background-color: #f8f9fa; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            color: #444; 
+            display: inline-block;
+            border: 1px solid #eee;
+        }
+
+        /* 2. 랜덤 데이터 생성 (개발 과정에 사용 - 삭제 예정) */
+        .control-panel { 
+            text-align: center; 
+            margin-bottom: 30px; 
+            padding: 20px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+        }
+        .control-title { margin-bottom: 15px; font-size: 0.95em; color: #666; font-weight: bold; }
+        
+        .date-picker {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-right: 10px;
+            font-family: inherit;
+        }
+
+        button {
+            padding: 12px 20px; 
+            font-size: 15px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            color: white; 
+            font-weight: bold; 
+            margin: 5px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.98); }
+        .btn-led { background: linear-gradient(135deg, #FF6384, #d63c5e); }
+        .btn-rhythm { background: linear-gradient(135deg, #36A2EB, #258cd1); }
+
+        /* 3. 그래프 레이아웃 */
+        .chart-container { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 15px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            margin-bottom: 20px; 
+        }
+        .chart-title { text-align: center; font-weight: bold; margin-bottom: 15px; color: #555; }
+        .row { display: flex; gap: 20px; }
+        .col { flex: 1; }
+        @media (max-width: 768px) { .row { flex-direction: column; } }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>[오늘의 분석 보고서]</h1>
+
+    <!-- 진단 메시지 -->
+    <div id="ai-message-box" class="diagnosis-card">
+        <div class="diagnosis-title">데이터 분석 대기 중...</div>
+        <div class="diagnosis-text">오늘의 게임 기록이 없습니다.<br>게임을 진행하고 오늘의 상태를 확인해보세요!</div>
+    </div>
+
+    <!-- 컨트롤 패널 -->
+    <div class="control-panel">
+        <div class="control-title">날짜 설정, 버튼으로 랜덤 데이터 생성 -> 그래프 확인 (정확도/걸린 시간)</div>
+        <input type="date" id="sim-date" class="date-picker">
+        <br><br>
+        <button class="btn-led" onclick="simulateGame('LED')">LED 게임 기록 추가</button>
+        <button class="btn-rhythm" onclick="simulateGame('RHYTHM')">박자 게임 기록 추가</button>
+    </div>
+
+    <!-- 메인 그래프 -->
+    <div class="chart-container">
+        <div class="chart-title">일별 평균 정확도 추이 (%)</div>
+        <canvas id="accuracyChart"></canvas>
+    </div>
+
+    <!-- 서브 그래프 -->
+    <div class="row">
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#FF6384;">⚡ 일별 평균 LED 반응 속도 (초)</div>
+            <canvas id="ledTimeChart"></canvas>
+        </div>
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#36A2EB;">⏱️ 일별 평균 박자 게임 소요 시간 (초)</div>
+            <canvas id="rhythmTimeChart"></canvas>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+    import { getDatabase, ref, push, onValue, query, limitToLast } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
+
+    // --- [A] Firebase 설정 ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyAWo3hSRzd-xBVcY4qOZO1s1KJvu7Cthwo",
+        authDomain: "blink-7a4c4.firebaseapp.com",
+        databaseURL: "https://blink-7a4c4-default-rtdb.asia-southeast1.firebasedatabase.app",
+        projectId: "blink-7a4c4",
+        storageBucket: "blink-7a4c4.firebasestorage.app",
+        messagingSenderId: "376747209878",
+        appId: "1:376747209878:web:0d1d0baca00f5aa234beb7",
+        measurementId: "G-RJ2SZLRRPT"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const dataRef = ref(db, 'game_logs');
+
+    // 날짜 선택기 기본값을 오늘로 설정
+    document.getElementById('sim-date').valueAsDate = new Date();
+
+    // --- [B] 차트 설정 (아직 사용하지 않음) ---
+    const commonScales = {
+        y: { beginAtZero: false }, // 정확도 0부터 시작 X
+        x: { 
+            grid: { display: false } // 세로선 숨김
+        }
+    };
+
+    // 정확도 차트
+    const accCtx = document.getElementById('accuracyChart').getContext('2d');
+    // data: { labels: [(x축 : 날짜 배열)], datasets: [ { label: 'LED', data: [(y축 데이터 배열)] }, { label: '박자', data: [(y축 데이터 배열)] } ] }
+    const accuracyChart = new Chart(accCtx, {
+        type: 'line',
+        data: { labels: [], datasets: [
+            { label: 'LED 정확도', borderColor: '#FF6384', backgroundColor: '#FF6384', data: [], tension: 0.3, pointRadius: 5 },
+            { label: '박자 정확도', borderColor: '#36A2EB', backgroundColor: '#36A2EB', data: [], tension: 0.3, pointRadius: 5 }
+        ]},
+        options: { responsive: true, scales: { y: { min: 0, max: 100 } } } // 이후 commonScales 적용 예정
+    });
+
+    const ledTimeCtx = document.getElementById('ledTimeChart').getContext('2d');
+    const ledTimeChart = new Chart(ledTimeCtx, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: '반응 시간', backgroundColor: '#FF6384', data: [] }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+
+    const rhythmTimeCtx = document.getElementById('rhythmTimeChart').getContext('2d');
+    const rhythmTimeChart = new Chart(rhythmTimeCtx, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: '소요 시간', backgroundColor: '#36A2EB', data: [] }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+
+
+    // --- [C] 데이터 수신 및 처리 (차트 갱신) ---
+
+    onValue(query(dataRef, limitToLast(100)), (snapshot) => {
+        // db에서 최근 데이터 수신 (최대 100개)
+        const data = snapshot.val();
+        if (!data) return;
+
+        // 1. 날짜별 그룹화 (Grouping)
+        // 구조: { "12/15" : { LED: { accSum(정확도 합), timeSum(시간 합), count(게임 횟수) }, RHYTHM: { ... } }, ... }
+        let dailyGroups = {};
+        
+        // 2. 진단용 데이터 저장 (오늘 vs 과거)
+        // historyAcc, historyTime: 과거 정확도, 시간 배열
+        // todayAcc, todayTime: 오늘 정확도, 시간 배열
+        let stats = {
+            LED: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] },
+            RHYTHM: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] }
+        };
+
+        // 오늘 날짜 계산
+        const today = new Date();
+        today.setHours(0,0,0,0); 
+
+        // 시간 순서 데이터 정렬
+        const sortedLogs = Object.values(data).sort((a, b) => a.timestamp - b.timestamp);
+
+        sortedLogs.forEach(log => {
+            const logDate = new Date(log.timestamp);
+            // 날짜 키 생성 (예: "12/15")
+            const dateKey = `${logDate.getMonth()+1}/${logDate.getDate()}`;
+            
+        // [그래프 용] 날짜 별 그룹화
+            if (!dailyGroups[dateKey]) {
+                dailyGroups[dateKey] = { 
+                    LED: { accSum: 0, timeSum: 0, count: 0 }, 
+                    RHYTHM: { accSum: 0, timeSum: 0, count: 0 } 
+                };
+            }
+            // 날짜 별 데이터 누적 로직
+            const group = dailyGroups[dateKey][log.game_type];
+            if (group) {
+                group.accSum += parseFloat(log.accuracy);
+                group.timeSum += parseFloat(log.play_time);
+                group.count += 1;
+            }
+
+        // [진단 용] 오늘 / 과거 데이터 분리
+            const isToday = logDate >= today;
+            if (stats[log.game_type]) {     // 유효한 게임 타입인 경우, 타입별로 (today / history)(Acc/Time)로 구분해서 데이터 추가
+                const targetAcc = isToday ? stats[log.game_type].todayAcc : stats[log.game_type].historyAcc;
+                const targetTime = isToday ? stats[log.game_type].todayTime : stats[log.game_type].historyTime;
+                
+                targetAcc.push(parseFloat(log.accuracy));   // 정확도 추가
+                targetTime.push(parseFloat(log.play_time)); // 시간 추가
+            }
+        });
+
+        // 3. 평균 계산
+        let chartLabels = Object.keys(dailyGroups);     // dailyGroups의 키(날짜) 추출한 배열
+        let accLedAvg = [], accRhythmAvg = [];          // 정확도 평균 배열
+        let timeLedAvg = [], timeRhythmAvg = [];        // 시간 평균 배열
+
+        chartLabels.forEach(date => {
+            const dayData = dailyGroups[date];          // 해당 날짜 데이터
+
+        // [LED 평균 계산]
+            if (dayData.LED.count > 0) {
+                accLedAvg.push((dayData.LED.accSum / dayData.LED.count).toFixed(1));
+                timeLedAvg.push((dayData.LED.timeSum / dayData.LED.count).toFixed(1));
+            } else {
+                // 데이터 없으면 null 추가
+                accLedAvg.push(null);
+                timeLedAvg.push(null);
+            }
+
+        // [Rhythm 평균 계산]
+            if (dayData.RHYTHM.count > 0) {
+                accRhythmAvg.push((dayData.RHYTHM.accSum / dayData.RHYTHM.count).toFixed(1));
+                timeRhythmAvg.push((dayData.RHYTHM.timeSum / dayData.RHYTHM.count).toFixed(1));
+            } else {
+                // 데이터 없으면 null 추가
+                accRhythmAvg.push(null);
+                timeRhythmAvg.push(null);
+            }
+        });
+
+        // 4. 차트 업데이트 (Chart.js 라이브러리)
+        accuracyChart.data.labels = chartLabels;                // x축 : 날짜
+        accuracyChart.data.datasets[0].data = accLedAvg;        // dataset[0] : LED 정확도
+        accuracyChart.data.datasets[1].data = accRhythmAvg;     // dataset[1] : 박자 정확도
+        accuracyChart.update();                                 // 그래프 그리기
+
+        // LED 반응속도 그래프
+        ledTimeChart.data.labels = chartLabels;                 // x축 : 날짜 (LED, 박자 둘 중 하나라도 기록이 있다면 날짜 모두 표시함)
+        ledTimeChart.data.datasets[0].data = timeLedAvg;        // y축: LED 시간 데이터 (없는 날은 빈칸)
+        ledTimeChart.update();                                  // 그래프 그리기
+
+        rhythmTimeChart.data.labels = chartLabels;              // x축 : 날짜 (LED, 박자 둘 중 하나라도 기록이 있다면 날짜 모두 표시함)
+        rhythmTimeChart.data.datasets[0].data = timeRhythmAvg;  // y축: 박자 시간 데이터 (없는 날은 빈칸)
+        rhythmTimeChart.update();                               // 그래프 그리기
+
+        // 5. 컨디션 진단 실행
+        runDiagnosis(stats);
+    });
+
+    // 평균 구하는 함수 정의 (리스트에 내용물이 있을 때 - 누적합 - 개수로 나눔 / 없을 때 - 0 반환)
+    // ex) getAvg([10,20,30]) => 20
+    const getAvg = (arr) => arr.length ? (arr.reduce((a,b)=>a+b,0) / arr.length) : 0;
+
+
+    // --- [D] 컨디션 진단 로직  ---
+    function runDiagnosis(stats) {
+        const msgBox = document.getElementById('ai-message-box');   // 메시지 박스 요소
+        const title = msgBox.querySelector('.diagnosis-title');     // 제목 요소
+        const text = msgBox.querySelector('.diagnosis-text');       // 본문 요소
+
+        // 오늘 데이터가 아예 없는 경우
+        if (stats.LED.todayAcc.length === 0 && stats.RHYTHM.todayAcc.length === 0) {
+            title.innerHTML = "오늘의 기록을 기다리는 중...";
+            text.innerHTML = "오늘의 게임을 진행해 주세요.";
+            msgBox.style.borderLeftColor = "#ccc"; 
+            msgBox.style.backgroundColor = "#fff";
+            return;
+        }
+
+        // 점수 계산 함수 정의
+        const getScore = (today, history, isTime) => {
+            const baseVal = history || (isTime ? 30 : 70);  // 과거 데이터 (과거 데이터가 없으면 기본값(시간 30초, 점수 70점) 사용)
+            if (isTime) return today <= baseVal ? 1 : 0;    // 시간 작으면 1
+            return today >= baseVal ? 1 : 0;                // 정확도 크면 1
+        };
+
+        // today 평균값 계산
+        const todayLedAcc = getAvg(stats.LED.todayAcc);
+        const todayLedTime = getAvg(stats.LED.todayTime);
+        const todayBeatAcc = getAvg(stats.RHYTHM.todayAcc);
+        const todayBeatTime = getAvg(stats.RHYTHM.todayTime);
+
+        // 각 항목별 점수 계산 (오늘/과거 비교)
+        const L_Acc = getScore(todayLedAcc, getAvg(stats.LED.historyAcc), false);
+        const L_Time = getScore(todayLedTime, getAvg(stats.LED.historyTime), true);
+        const B_Acc = getScore(todayBeatAcc, getAvg(stats.RHYTHM.historyAcc), false);
+        const B_Time = getScore(todayBeatTime, getAvg(stats.RHYTHM.historyTime), true);
+
+        // 총점 계산
+        const totalScore = L_Acc + L_Time + B_Acc + B_Time;
+        const accScore = L_Acc + B_Acc;
+        const timeScore = L_Time + B_Time;
+
+        // 점수에 따른 메시지 설정
+        if (totalScore >= 3) {
+            title.innerHTML = "🌟 최상의 컨디션 🌟";
+            text.innerHTML = `몸도 마음도 청춘이시네요!<br><div class='recommendation'>추천 활동: 가벼운 산책을 하시거나 바둑/장기를 한 판 둬보세요!</div>`;
+            msgBox.style.borderLeftColor = "#4CAF50"; 
+            msgBox.style.backgroundColor = "#E8F5E9";
+        } else if (totalScore === 0) {
+            title.innerHTML = "😴 휴식이 필요한 하루";
+            text.innerHTML = `오늘 몸이 무거우시진 않으신가요?<br><div class='recommendation'>추천 활동: 무리하지 마시고 따뜻한 차와 함께 휴식을 취해보세요.</div>`;
+            msgBox.style.borderLeftColor = "#F44336"; 
+            msgBox.style.backgroundColor = "#FFEBEE";
+        } else if (accScore === 2 && timeScore === 0) {
+            title.innerHTML = "🐢 신중한 하루 🐢";
+            text.innerHTML = `나비처럼 날아 벌처럼 쏜다!<br><div class='recommendation'>추천 활동: 굳은 몸을 풀어주는 스트레칭이 필요해요. 기지개를 한번 시원하게 켜볼까요?</div>`;
+            msgBox.style.borderLeftColor = "#FF9800"; 
+            msgBox.style.backgroundColor = "#FFF3E0";
+        } else if (timeScore === 2 && accScore === 0) {
+            title.innerHTML = "⚡ 조급한 하루 ⚡";
+            text.innerHTML = `틀려도 괜찮아요! 평온한 마음을 가져보세요.<br><div class='recommendation'>추천 활동: 차분한 음악과 함께 옛날 사진첩을 찬찬히 넘겨보며 추억 여행을 떠나보세요.</div>`;
+            msgBox.style.borderLeftColor = "#9C27B0"; 
+            msgBox.style.backgroundColor = "#F3E5F5";
+        } else {
+            title.innerHTML = "🙂 평온한 하루 🙂";
+            text.innerHTML = `오늘도 한결같이 건강한 모습이시군요!<br><div class='recommendation'>추천 활동: 가족이나 친구에게 전화해 반가운 목소리를 들어보세요.</div>`;
+            msgBox.style.borderLeftColor = "#2196F3"; 
+            msgBox.style.backgroundColor = "#E3F2FD";
+        }
+    }
+
+    // --- [E] 랜덤 데이터 생성 (개발 과정에 사용 - 삭제 예정) ---
+    window.simulateGame = function(type) {
+        let baseTime = type === "LED" ? 20 : 45;                // LED: 20초, 박자: 45초 기준
+        let finalTime = baseTime + (Math.random() * 20 - 5);    // -5초 ~ +15초 랜덤 변동
+        let acc = (50 + Math.random() * 50).toFixed(1);         // 50.0% ~ 100.0% 랜덤 정확도
+
+        const dateInput = document.getElementById('sim-date').value; // 선택한 날짜
+        const selectedDate = new Date(dateInput);                    // 날짜 객체 생성
+        
+        // 날짜에 랜덤 시간을 추가해서 겹치지 않게 함 (하루에 여러 판 한 것처럼)
+        const randomHour = Math.floor(Math.random() * 12) + 9;  // 09시 ~ 21시 사이
+        const randomMin = Math.floor(Math.random() * 60);       // 00분 ~ 59분 사이
+        selectedDate.setHours(randomHour, randomMin, 0);        // 시간 설정
+
+        push(dataRef, {
+            game_type: type,
+            accuracy: parseFloat(acc),
+            play_time: finalTime.toFixed(1),
+            timestamp: selectedDate.getTime()
+        });
+    }
+</script>
+</body>
+</html>
