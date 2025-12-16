@@ -134,8 +134,14 @@
     import { getDatabase, ref, push, onValue, query, limitToLast } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js";
 
     // --- [A] Firebase 설정 ---
+    const myKey = prompt("Enter apiKey :");     // 실행할 때 마다 API 키 입력 받기
+    if (!myKey) {
+        alert("새로고침 후 다시 시도하세요.");
+        throw new Error("API key is required.");
+    }
+
     const firebaseConfig = {
-        apiKey: "AIzaSyAWo3hSRzd-xBVcY4qOZO1s1KJvu7Cthwo",
+        apiKey: myKey,      // 입력받은 키
         authDomain: "blink-7a4c4.firebaseapp.com",
         databaseURL: "https://blink-7a4c4-default-rtdb.asia-southeast1.firebasedatabase.app",
         projectId: "blink-7a4c4",
@@ -144,6 +150,7 @@
         appId: "1:376747209878:web:0d1d0baca00f5aa234beb7",
         measurementId: "G-RJ2SZLRRPT"
     };
+    
 
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
