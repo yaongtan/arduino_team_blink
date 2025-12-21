@@ -40,7 +40,7 @@
             border: 1px solid #eee;
         }
 
-        /* 2. 랜덤 데이터 생성 (개발 과정에 사용 - 삭제 예정) */
+        /* 2. 랜덤 데이터 생성 (하드웨어 오류 대비) */
         .control-panel { 
             text-align: center; 
             margin-bottom: 30px; 
@@ -88,6 +88,23 @@
         .row { display: flex; gap: 20px; }
         .col { flex: 1; }
         @media (max-width: 768px) { .row { flex-direction: column; } }
+
+        /* 4. 데이터 로그 테이블 */
+        .table-container {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            margin-bottom: 30px;
+            overflow-x: auto; 
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #eee; }
+        th { background-color: #f8f9fa; color: #555; font-weight: bold; }
+        tr:hover { background-color: #f1f1f1; } 
+    
+        .type-led { color: #FF6384; font-weight: bold; }
+        .type-rhythm { color: #36A2EB; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -101,15 +118,6 @@
         <div class="diagnosis-text">오늘의 게임 기록이 없습니다.<br>게임을 진행하고 오늘의 상태를 확인해보세요!</div>
     </div>
 
-    <!-- 컨트롤 패널 -->
-    <div class="control-panel">
-        <div class="control-title">날짜 설정, 버튼으로 랜덤 데이터 생성 -> 그래프 확인 (정확도/걸린 시간)</div>
-        <input type="date" id="sim-date" class="date-picker">
-        <br><br>
-        <button class="btn-led" onclick="simulateGame('LED')">LED 게임 기록 추가</button>
-        <button class="btn-rhythm" onclick="simulateGame('RHYTHM')">박자 게임 기록 추가</button>
-    </div>
-
     <!-- 메인 그래프 -->
     <div class="chart-container">
         <div class="chart-title">일별 평균 정확도 추이 (%)</div>
@@ -119,14 +127,42 @@
     <!-- 서브 그래프 -->
     <div class="row">
         <div class="col chart-container">
-            <div class="chart-title" style="color:#FF6384;">⚡ 일별 평균 LED 반응 속도 (초)</div>
+            <div class="chart-title" style="color:#FF6384;">LED 반응 속도 (초)</div>
             <canvas id="ledTimeChart"></canvas>
         </div>
         <div class="col chart-container">
-            <div class="chart-title" style="color:#36A2EB;">⏱️ 일별 평균 박자 게임 소요 시간 (초)</div>
+            <div class="chart-title" style="color:#36A2EB;">박자 게임 소요 시간 (초)</div>
             <canvas id="rhythmTimeChart"></canvas>
         </div>
     </div>
+
+    <!-- 시뮬레이션 데이터 생성 (하드웨어 오류 대비) -->
+    <div class="control-panel">
+        <div class="control-title">하드웨어 오류 대비 시뮬레이션 (날짜 설정 후 기록 추가 버튼 클릭)</div>
+        <input type="date" id="sim-date" class="date-picker">
+        <br><br>
+        <button class="btn-led" onclick="simulateGame('LED')">LED 게임 기록 추가</button>
+        <button class="btn-rhythm" onclick="simulateGame('RHYTHM')">박자 게임 기록 추가</button>
+    </div>
+
+    <!--  -->
+    <div class="table-container">
+        <div class="chart-title">게임 기록 (최근 10개)</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>시간</th>
+                    <th>게임 종류</th>
+                    <th>정확도</th>
+                    <th>소요 시간</th>
+                </tr>
+            </thead>
+            <tbody id="logTableBody">
+                <!-- js에서 데이터 채움 -->
+            </tbody>
+        </table>
+    </div>
+
 </div>
 
 <script type="module">
@@ -219,6 +255,10 @@
 
         // 시간 순서 데이터 정렬
         const sortedLogs = Object.values(data).sort((a, b) => a.timestamp - b.timestamp);
+
+        // 최근 데이터 10개 표 그리는 함수로 전송
+        const recentLogs = sortedLogs.slice().reverse().slice(0, 10);
+        updateLogTable(recentLogs);
 
         sortedLogs.forEach(log => {
             const logDate = new Date(log.timestamp);
@@ -372,7 +412,7 @@
         }
     }
 
-    // --- [E] 랜덤 데이터 생성 (개발 과정에 사용 - 삭제 예정) ---
+    // --- [E] 랜덤 데이터 생성 (하드웨어 오류 대비) ---
     window.simulateGame = function(type) {
         let baseTime = type === "LED" ? 20 : 45;                // LED: 20초, 박자: 45초 기준
         let finalTime = baseTime + (Math.random() * 20 - 5);    // -5초 ~ +15초 랜덤 변동
@@ -393,6 +433,32 @@
             timestamp: selectedDate.getTime()
         });
     }
+
+    // --- [F] 최근 게임 기록 테이블 ---
+    function updateLogTable(logs) {
+        const tbody = document.getElementById('logTableBody');
+        tbody.innerHTML = ""; // 기존 내용 초기화
+
+        logs.forEach(log => {
+            const date = new Date(log.timestamp);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dateStr = `${date.getMonth()+1}/${date.getDate()}`;
+            // 게임 종류에 따른 클래스 및 이름 설정
+            const typeClass = log.game_type === "LED" ? "type-led" : "type-rhythm";
+            const typeName = log.game_type === "LED" ? "LED 게임" : "박자 게임";
+
+            const row = `
+                <tr>
+                    <td>${dateStr} ${timeStr}</td>
+                    <td class="${typeClass}">${typeName}</td>
+                    <td>${log.accuracy}%</td>
+                    <td>${log.play_time}초</td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    }
+
 </script>
 </body>
 </html>

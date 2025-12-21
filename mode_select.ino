@@ -1,6 +1,10 @@
 #include <LiquidCrystal.h>
+#include <SPI.h>  // SD카드 통신용
+#include <SD.h>   // SD카드 라이브러리
 
 LiquidCrystal lcd(44, 45, 46, 47, 48, 49);  // LCD 연결
+
+const int chipSelect = 53; // SD카드 CS핀
 
 int led_pins[] = { 8, 9, 10, 11 };
 int button_pins[] = { 14, 15, 16, 17 };
@@ -73,9 +77,27 @@ void led_onoff(int pin) {
     digitalWrite(i, i == pin);
 }
 
+// SD카드 데이터 시리얼 모니터에 출력
+void printSDLogs() {
+  File dataFile = SD.open("game_log.txt");
+
+  if (dataFile) {
+    Serial.println("----------- SD Logs -----------");
+    while (dataFile.available()) {
+      Serial.write(dataFile.read());
+    }
+    dataFile.close();
+    Serial.println("\n-----------------------------");
+  } else {
+    Serial.println("no logs.");
+  }
+}
+
 //셋업(LED 출력 시퀀스를 임시로 출력하게 해놓았기에 확인 가능(추후 삭제 예정))
 void setup() {
   Serial.begin(9600);
+  Serial1.begin(9600);  // NodeMCU와 통신 (19-RX, 18-TX)
+  lcd.begin(16, 2);
   randomSeed(analogRead(0));
   /*make_random_sequence(sequence_num);
   
@@ -88,8 +110,18 @@ void setup() {
     pinMode(led_pins[i], OUTPUT);
     pinMode(button_pins[i], INPUT);
   }
+  // SD카드 통신 시작
+  Serial.print("SD Connecting...");
+  pinMode(53, OUTPUT); 
+  // 연결 결과 출력
+  if (!SD.begin(chipSelect)) {
+    Serial.println("SD Connection Failed.");
+  } else {
+    Serial.println("SD Connected.");
+  }
 
-  lcd.begin(16, 2);
+  printSDLogs(); // SD카드 데이터 출력
+  
   showMenu();
   delay(1000);  //시작 전 딜레이 추후 삭제 예정
 }
@@ -100,10 +132,41 @@ Timer led_timer1(0, 700);
 Timer led_timer2(0, 400);
 Timer button_timer1(0, 10000);
 
+// [게임 결과 저장 및 전송]
+
+// SD카드에 저장
+void saveToSD(String type, float score, float playTime) {
+  // "game_log.txt"에 저장 (없으면 알아서 만듦)
+  File dataFile = SD.open("game_log.txt", FILE_WRITE);
+
+  if (dataFile) {
+    // 형식: LED,scroe,playTime
+    dataFile.print(type);
+    dataFile.print(",");
+    dataFile.print(score, 1);
+    dataFile.print(",");
+    dataFile.println(playTime, 1);
+    
+    dataFile.close(); 
+    Serial.println("SD카드 저장 완료");
+  } else {
+    Serial.println("game_log.txt 파일을 열 수 없음");
+  }
+}
+
+// 사용법: sendResult("LED", 95.5, 20.3);
+void sendResult(String type, float score, float playTime) {
+  String data = type + "," + String(score, 1) + "," + String(playTime, 1); // 데이터 합치기 (예: "LED,95.5,20.3")
+  Serial1.println(data); // NodeMCU로 전송 (Serial1 사용)
+  
+  Serial.print("NodeMCU 전송 완료 : ");
+  Serial.println(data);
+}
+
+// [게임 로직]
 
 // LED GAME
 // ex) 3121 = 11 9 10 9
-
 void LED_game() {
   int onoff = 0;
   int finish = 0;
@@ -132,8 +195,13 @@ void LED_game() {
         }
       }
       // 게임 끝
-      // 입력 시간 초과 또는 sequence_num번 버튼 입력했을 때
+      // 입력 시간 초과 또는 버튼 다 눌렀을 때
       if (per_time_interval(button_timer1) || my_count == sequence_num) {
+        
+        // 게임 소요 시간 계산 (초)
+        unsigned long endTime = millis();
+        float playTime = (float)(endTime - button_timer1.previous) / 1000.0;
+
         Serial.println("-----------------------------");
         for (int i = 0; i < sequence_num; i++) {
           Serial.print(sequence[i]);
@@ -158,6 +226,10 @@ void LED_game() {
         lcd.print("YOUR SCORE: ");
         lcd.setCursor(11,1);
         lcd.print(score) ;
+
+        // LED 게임 결과 저장 및 전송
+        sendResult("LED", score, playTime);
+        saveToSD("LED", score, playTime);
 
         // 15번핀 버튼 눌릴 때 까지 기다림
         while(!button_ifclicked(1));
@@ -190,7 +262,7 @@ void LED_game() {
   }
 }
 
-
+// RHYTHM GAME
 void rhythm_game() {
   int rhythm_finish = 0;
 
@@ -203,6 +275,10 @@ void rhythm_game() {
     lcd.setCursor(0,0);
     lcd.print("Press button 1");
 
+    // 임의로 데이터 저장 및 전송
+    sendResult("RHYTHM", 80.0, 60.0); 
+    saveToSD("RHYTHM", 80.0, 60.0);
+
     // 15번핀 버튼 눌릴 때 까지 기다림
     while(!button_ifclicked(1));
 
@@ -211,6 +287,9 @@ void rhythm_game() {
     showMenu();         // 메뉴 화면 띄우기
   }
 }
+
+
+// [모드 선택]
 
 // 메뉴 변수 설정
 int menuIndex = 0;
@@ -239,6 +318,7 @@ void menuLoop() {
     else if (menuIndex == 1) mode = MODE_RHYTHM;
   }
 }
+
 
 // 메인 루프
 void loop() {
