@@ -322,10 +322,21 @@ void rhythm_game() {
         error = abs(rhythm[i] - my_rhythm[i]);
         error_sum += error;
       }
-      
+
+      float avg_error = error_sum/rhythm_num;
+      Serial.print("AVG ERROR: ");
+      Serial.println(avg_error);
+      Serial.println();
+      Serial.println("-----------------------------");
+
+      lcd.setCursor(0, 1);
+      lcd.print("AVG ERROR : ");
+      lcd.setCursor(11, 1);
+      lcd.print(avg_error);
+
       // 임의로 데이터 저장 및 전송
-      sendResult("RHYTHM", error_sum/rhythm_num, 1);
-      saveToSD("RHYTHM", error_sum/rhythm_num, 1);
+      sendResult("RHYTHM", avg_error, 1);
+      saveToSD("RHYTHM", avg_error, 1);
 
       // 15번핀 버튼 눌릴 때 까지 기다림
       while (!button_ifclicked(1));
