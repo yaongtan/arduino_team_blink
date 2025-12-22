@@ -60,7 +60,7 @@ void make_random_sequence(int num) {
 }
 void make_random_rhythm(int num) {
   for (int i = 0; i < num; i++) {
-    rhythm[i] = random(500, 2000);
+    rhythm[i] = random(200, 1000);
   }
 }
 
@@ -292,6 +292,7 @@ void rhythm_game() {
   int error_sum = 0;
   int error = 0;
 
+  buzzer_on();
   buzzer_timer.previous = millis();
   buzzer_timer.interval = rhythm[rhythm_index];
   while (rhythm_finish == 0) {
