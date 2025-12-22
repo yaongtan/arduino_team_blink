@@ -1,123 +1,260 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <SoftwareSerial.h>
+#include <LittleFS.h>   // 파일 시스템
+#include <WiFiUdp.h>
+#include <NTPClient.h>  // 시간 가져오기용
 
-// ▼▼▼ 와이파이 설정 ▼▼▼
+// ▼▼▼ 와이파이 설정 (수정 필수) ▼▼▼
 const char* ssid = "YOUR_WIFI_ID";
 const char* password = "YOUR_WIFI_PW";
-// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
+// ▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲▲
 
-// 메가와 통신 (RX=D1, TX=D2)
-SoftwareSerial megaSerial(5, 4); // GPIO 5(D1), 4(D2)
+// 메가와 통신 (D1=RX, D2=TX) -> Mega의 TX1(18), RX1(19)과 연결
+SoftwareSerial megaSerial(5, 4); 
 
 ESP8266WebServer server(80);
 
-const char MAIN_PAGE[] PROGMEM = R"rawliteral(
+// 시간 설정을 위한 NTP 객체 (한국 시간: UTC+9 -> 32400초)
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 32400);
 
+// ---------------------------------------------------------
+// HTML 페이지 (Firebase 제거, fetch API 사용)
+// ---------------------------------------------------------
+const char MAIN_PAGE[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BLINK_web service</title>
+    <title>blink_web</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: sans-serif; padding: 20px; background: #f4f7f6; }
+        body { background-color: #f4f7f6; font-family: 'Apple SD Gothic Neo', sans-serif; margin: 0; padding: 20px; color: #333; }
         .container { max-width: 1000px; margin: 0 auto; }
-        .chart-container { background: white; padding: 20px; margin-bottom: 20px; border-radius: 10px; }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 20px; }
+        
+        .diagnosis-card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 30px; border-left: 10px solid #ccc; }
+        .diagnosis-title { font-size: 1.6em; font-weight: bold; margin-bottom: 10px; }
+        .diagnosis-text { font-size: 1.1em; line-height: 1.6; color: #555; }
+        .recommendation { margin-top: 15px; padding: 15px; background-color: #f8f9fa; border-radius: 8px; font-weight: bold; border: 1px solid #eee; display: inline-block; }
+
+        .chart-container { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .chart-title { text-align: center; font-weight: bold; margin-bottom: 15px; color: #555; }
+        .row { display: flex; gap: 20px; }
+        .col { flex: 1; }
+        @media (max-width: 768px) { .row { flex-direction: column; } }
+
+        .table-container { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #eee; }
+        th { background-color: #f8f9fa; color: #555; }
+        .type-led { color: #FF6384; font-weight: bold; }
+        .type-rhythm { color: #36A2EB; font-weight: bold; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>[실시간] 게임 기록 대시보드</h1>
-        
-        <div class="chart-container">
-            <canvas id="accuracyChart"></canvas>
+
+<div class="container">
+    <h1>[오늘의 분석 보고서]</h1>
+
+    <div id="ai-message-box" class="diagnosis-card">
+        <div class="diagnosis-title">데이터 분석 대기 중...</div>
+        <div class="diagnosis-text">로딩 중입니다...</div>
+    </div>
+
+    <div class="chart-container">
+        <div class="chart-title">일별 평균 정확도 추이 (%)</div>
+        <canvas id="accuracyChart"></canvas>
+    </div>
+
+    <div class="row">
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#FF6384;">LED 반응 속도 (초)</div>
+            <canvas id="ledTimeChart"></canvas>
         </div>
-        
-        <div class="chart-container">
-            <h3>상세 기록</h3>
-            <table border="1" style="width:100%; border-collapse: collapse;">
-                <thead><tr><th>타입</th><th>정확도</th><th>시간</th></tr></thead>
-                <tbody id="logTableBody"></tbody>
-            </table>
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#36A2EB;">박자 게임 소요 시간 (초)</div>
+            <canvas id="rhythmTimeChart"></canvas>
         </div>
     </div>
 
+    <div class="table-container">
+        <div class="chart-title">최근 게임 기록</div>
+        <table>
+            <thead><tr><th>시간</th><th>게임 종류</th><th>정확도(오차)</th><th>소요 시간</th></tr></thead>
+            <tbody id="logTableBody"></tbody>
+        </table>
+    </div>
+</div>
+
 <script>
-    // --- [데이터 로드 함수] ---
+    // 페이지 로드 시 데이터 가져오기
+    window.onload = loadData;
+
     async function loadData() {
         try {
-            const response = await fetch('/history'); 
+            // NodeMCU의 /data 경로에서 텍스트 파일 내용을 가져옴
+            const response = await fetch('/data');
             const text = await response.text();
             
-            console.log("받은 데이터:", text); // 디버깅용
-
-            // 데이터 파싱 및 차트 그리기
+            // 데이터 파싱 (형식: timestamp,type,score,time)
             const lines = text.trim().split('\n');
             const logs = [];
 
             lines.forEach(line => {
                 const parts = line.split(',');
-                if (parts.length >= 3) {
+                if (parts.length >= 4) {
                     logs.push({
-                        type: parts[0],
-                        score: parseFloat(parts[1]),
-                        time: parseFloat(parts[2])
+                        timestamp: parseInt(parts[0]),
+                        game_type: parts[1],
+                        accuracy: parseFloat(parts[2]),
+                        play_time: parseFloat(parts[3])
                     });
                 }
             });
 
-            updateDashboard(logs);
+            processData(logs);
 
         } catch (error) {
             console.error("데이터 로드 실패:", error);
-            alert("데이터를 가져오는 중 오류가 발생했습니다.");
+            document.querySelector('.diagnosis-text').innerHTML = "데이터를 불러오는 데 실패했습니다.<br>NodeMCU 연결을 확인해주세요.";
         }
     }
 
-    function updateDashboard(logs) {
-        // 테이블 갱신
+    function processData(logs) {
+        // 1. 테이블 업데이트 (최신순 10개)
         const tbody = document.getElementById('logTableBody');
         tbody.innerHTML = "";
         
-        // 차트 데이터 준비
-        const labels = logs.map((_, i) => i + 1);
-        const ledScores = logs.map(l => l.type === 'LED' ? l.score : null);
-        const rhythmScores = logs.map(l => l.type === 'RHYTHM' ? l.score : null);
+        // 날짜 오름차순 정렬
+        logs.sort((a, b) => a.timestamp - b.timestamp);
 
-        // 테이블 채우기
-        logs.forEach(log => {
-            const row = `<tr><td>${log.type}</td><td>${log.score}</td><td>${log.time}</td></tr>`;
+        // 테이블용 역순 복사본
+        const recentLogs = [...logs].reverse().slice(0, 10);
+        
+        recentLogs.forEach(log => {
+            const date = new Date(log.timestamp);
+            const timeStr = date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+            const dateStr = `${date.getMonth()+1}/${date.getDate()}`;
+            const typeClass = log.game_type === "LED" ? "type-led" : "type-rhythm";
+            const row = `<tr><td>${dateStr} ${timeStr}</td><td class="${typeClass}">${log.game_type}</td><td>${log.accuracy}</td><td>${log.play_time}</td></tr>`;
             tbody.innerHTML += row;
         });
 
-        // 차트 그리기 (간소화됨, 본인 코드 넣으셔도 됩니다)
+        // 2. 차트 데이터 가공 (일별 그룹화)
+        let dailyGroups = {};
+        let stats = {
+            LED: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] },
+            RHYTHM: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] }
+        };
+        
+        const today = new Date();
+        today.setHours(0,0,0,0);
+
+        logs.forEach(log => {
+            const logDate = new Date(log.timestamp);
+            const dateKey = `${logDate.getMonth()+1}/${logDate.getDate()}`; // "12/22" 형식
+
+            // 그룹화 초기화
+            if (!dailyGroups[dateKey]) {
+                dailyGroups[dateKey] = { LED: { acc: [], time: [] }, RHYTHM: { acc: [], time: [] } };
+            }
+            // 데이터 추가
+            if (dailyGroups[dateKey][log.game_type]) {
+                dailyGroups[dateKey][log.game_type].acc.push(log.accuracy);
+                dailyGroups[dateKey][log.game_type].time.push(log.play_time);
+            }
+
+            // 진단용 데이터 분류
+            const isToday = logDate >= today;
+            const target = stats[log.game_type];
+            if(target) {
+                (isToday ? target.todayAcc : target.historyAcc).push(log.accuracy);
+                (isToday ? target.todayTime : target.historyTime).push(log.play_time);
+            }
+        });
+
+        // 3. 차트 그리기용 배열 생성
+        const labels = Object.keys(dailyGroups);
+        const getAvg = arr => arr.length ? (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1) : null;
+
+        const ledAccData = labels.map(d => getAvg(dailyGroups[d].LED.acc));
+        const rhythmAccData = labels.map(d => getAvg(dailyGroups[d].RHYTHM.acc));
+        const ledTimeData = labels.map(d => getAvg(dailyGroups[d].LED.time));
+        const rhythmTimeData = labels.map(d => getAvg(dailyGroups[d].RHYTHM.time));
+
+        drawCharts(labels, ledAccData, rhythmAccData, ledTimeData, rhythmTimeData);
+        runDiagnosis(stats);
+    }
+
+    function drawCharts(labels, ledAcc, rhyAcc, ledTime, rhyTime) {
         new Chart(document.getElementById('accuracyChart'), {
             type: 'line',
-            data: {
-                labels: labels,
-                datasets: [
-                    { label: 'LED 정확도', data: ledScores, borderColor: '#FF6384', spanGaps: true },
-                    { label: '리듬 정확도', data: rhythmScores, borderColor: '#36A2EB', spanGaps: true }
-                ]
-            }
+            data: { labels: labels, datasets: [
+                { label: 'LED 점수', borderColor: '#FF6384', backgroundColor: '#FF6384', data: ledAcc, tension: 0.3 },
+                { label: '박자 오차', borderColor: '#36A2EB', backgroundColor: '#36A2EB', data: rhyAcc, tension: 0.3 }
+            ]},
+            options: { responsive: true }
+        });
+
+        new Chart(document.getElementById('ledTimeChart'), {
+            type: 'bar',
+            data: { labels: labels, datasets: [{ label: '초', backgroundColor: '#FF6384', data: ledTime }] }
+        });
+
+        new Chart(document.getElementById('rhythmTimeChart'), {
+            type: 'bar',
+            data: { labels: labels, datasets: [{ label: '초', backgroundColor: '#36A2EB', data: rhyTime }] }
         });
     }
 
-    window.onload = loadData;
+    function runDiagnosis(stats) {
+        const title = document.querySelector('.diagnosis-title');
+        const text = document.querySelector('.diagnosis-text');
+        const box = document.getElementById('ai-message-box');
+
+        const getAvg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+        
+        // 데이터가 아예 없으면
+        if (!stats.LED.todayAcc.length && !stats.RHYTHM.todayAcc.length) {
+            title.innerHTML = "데이터 대기 중";
+            text.innerHTML = "오늘 게임 기록이 아직 없습니다. 게임을 한 판 즐겨보세요!";
+            return;
+        }
+
+        // 간단한 로직: 점수가 높으면 굿 (LED 점수는 높을수록, 리듬 오차는 낮을수록 좋음)
+        const todayLed = getAvg(stats.LED.todayAcc);
+        
+        // 메시지 결정 로직 (단순화)
+        if (todayLed >= 80) {
+            title.innerHTML = "🌟 훌륭한 컨디션!";
+            text.innerHTML = "LED 반응 속도와 정확도가 매우 높습니다.<br><div class='recommendation'>추천: 어려운 난이도에 도전해보세요!</div>";
+            box.style.borderLeftColor = "#4CAF50";
+        } else {
+            title.innerHTML = "🙂 꾸준함이 중요해요";
+            text.innerHTML = "조금 더 집중해보세요! 몸을 풀고 다시 시도해볼까요?<br><div class='recommendation'>추천: 스트레칭 후 재도전!</div>";
+            box.style.borderLeftColor = "#FF9800";
+        }
+    }
 </script>
 </body>
 </html>
-
-)rawliteral"; 
-// ▲▲▲▲▲ HTML 끝 ▲▲▲▲▲
+)rawliteral";
 
 
 void setup() {
-  Serial.begin(115200);
-  megaSerial.begin(9600); // 메가와 통신 속도
+  Serial.begin(115200);     // 컴퓨터와 디버깅용
+  megaSerial.begin(9600);   // 메가와 통신용
+  
+  // LittleFS(파일시스템) 마운트
+  if(!LittleFS.begin()){
+    Serial.println("LittleFS Mount Failed");
+    return;
+  }
 
+  // 와이파이 연결
   WiFi.begin(ssid, password);
   Serial.print("WiFi Connecting");
   while (WiFi.status() != WL_CONNECTED) {
@@ -126,35 +263,30 @@ void setup() {
   Serial.println("\nConnected! IP: ");
   Serial.println(WiFi.localIP());
 
-  // 1. 웹페이지 접속 시 HTML 코드 보여주기
+  // NTP 시작
+  timeClient.begin();
+  timeClient.update();
+
+  // 웹 서버 경로 설정
   server.on("/", []() {
     server.send(200, "text/html", MAIN_PAGE);
   });
 
-  // 2. 데이터 요청 (/history)이 오면 메가한테 받아오기
-  server.on("/history", []() {
-    Serial.println("[Web] Request History...");
-    
-    // (1) 메가한테 'R' 명령 전송
-    megaSerial.write('R'); 
-    
-    // (2) 메가 응답 기다리기 (최대 4초)
-    String fullData = "";
-    unsigned long timeout = millis();
-    
-    while (millis() - timeout < 4000) {
-      if (megaSerial.available()) {
-        char c = megaSerial.read();
-        fullData += c;
-        timeout = millis(); // 데이터가 들어오는 동안은 타임아웃 연장
-      }
-      yield(); // 와이파이 끊김 방지
+  // 데이터 요청 시 log.txt 파일 읽어서 보내줌
+  server.on("/data", []() {
+    File file = LittleFS.open("/log.txt", "r");
+    if (!file) {
+      server.send(200, "text/plain", "");
+      return;
     }
-    
-    Serial.println("[Web] Data Received & Sent to Client");
-    // (3) 받은 데이터를 웹브라우저로 전송
-    server.sendHeader("Access-Control-Allow-Origin", "*");
-    server.send(200, "text/plain", fullData);
+    server.streamFile(file, "text/plain");
+    file.close();
+  });
+
+  // 데이터 초기화용 (필요시 브라우저 주소창에 /clear 입력)
+  server.on("/clear", []() {
+    LittleFS.remove("/log.txt");
+    server.send(200, "text/plain", "Log Cleared");
   });
 
   server.begin();
@@ -163,4 +295,28 @@ void setup() {
 
 void loop() {
   server.handleClient();
+  timeClient.update(); // 시간 업데이트
+
+  // 메가에서 데이터가 들어오면 읽어서 파일에 저장
+  if (megaSerial.available()) {
+    String data = megaSerial.readStringUntil('\n');
+    data.trim(); // 공백 제거
+
+    if (data.length() > 0) {
+      unsigned long epochTime = timeClient.getEpochTime(); // 현재 유닉스 시간
+      
+      // 파일에 "시간,데이터" 형식으로 저장
+      File file = LittleFS.open("/log.txt", "a"); // 'a'는 append(이어쓰기)
+      if (file) {
+        file.print(epochTime); // 타임스탬프 추가
+        file.print(",");
+        file.println(data);    // 예: 1703243123,LED,90.5,20.1
+        file.close();
+        Serial.print("Data Saved: ");
+        Serial.println(data);
+      } else {
+        Serial.println("File Open Failed");
+      }
+    }
+  }
 }

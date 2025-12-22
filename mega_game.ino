@@ -1,15 +1,15 @@
 #include <LiquidCrystal.h>
-#include <SPI.h>
-#include <SD.h>
+#include <SPI.h>  // SD카드 통신용
+#include <SD.h>   // SD카드 라이브러리
 
 LiquidCrystal lcd(44, 45, 46, 47, 48, 49);  // LCD 연결
+
+const int chipSelect = 53;  // SD카드 CS핀
 
 int led_pins[] = { 8, 9, 10, 11 };
 int button_pins[] = { 14, 15, 16, 17 };
 int ifbuttons[] = { 0, 0, 0, 0 };
-int buzzer_pin = 12;    // 버저 핀
-const int MIC_PIN = A1; // 마이크 핀
-const int chipSelect = 53;
+int buzzer_pin = 12;
 
 enum {
   MODE_MENU = 0,
@@ -92,6 +92,22 @@ void buzzer_on() {
   tone(buzzer_pin, 262, 120);
 }
 
+// SD카드 데이터 시리얼 모니터에 출력
+void printSDLogs() {
+  File dataFile = SD.open("game_log.txt");
+
+  if (dataFile) {
+    Serial.println("----------- SD Logs -----------");
+    while (dataFile.available()) {
+      Serial.write(dataFile.read());
+    }
+    dataFile.close();
+    Serial.println("\n-----------------------------");
+  } else {
+    Serial.println("no logs.");
+  }
+}
+
 //셋업(LED 출력 시퀀스를 임시로 출력하게 해놓았기에 확인 가능(추후 삭제 예정))
 void setup() {
   Serial.begin(9600);
@@ -104,11 +120,17 @@ void setup() {
     pinMode(button_pins[i], INPUT);
   }
   pinMode(buzzer_pin, OUTPUT);
-  pinMode(chipSelect, OUTPUT);
-
-  if (!SD.begin(53)) {
-    Serial.println("SD Init Failed!");
+  // SD카드 통신 시작
+  Serial.print("SD Connecting...");
+  pinMode(53, OUTPUT);
+  // 연결 결과 출력
+  if (!SD.begin(chipSelect)) {
+    Serial.println("SD Connection Failed.");
+  } else {
+    Serial.println("SD Connected.");
   }
+
+  printSDLogs();  // SD카드 데이터 출력
 
   showMenu();
   delay(1000);
@@ -122,23 +144,35 @@ Timer led_timer2(0, 400);
 Timer button_timer1(0, 10000);
 
 // [게임 결과 저장 및 전송]
-// SD 카드에 결과 저장
+
+// SD카드에 저장
 void saveToSD(String type, float score, float playTime) {
+  // "game_log.txt"에 저장 (없으면 알아서 만듦)
   File dataFile = SD.open("game_log.txt", FILE_WRITE);
+
   if (dataFile) {
-    dataFile.print(type); dataFile.print(",");
-    dataFile.print(score, 1); dataFile.print(",");
+    // 형식: LED,scroe,playTime
+    dataFile.print(type);
+    dataFile.print(",");
+    dataFile.print(score, 1);
+    dataFile.print(",");
     dataFile.println(playTime, 1);
+
     dataFile.close();
+    Serial.println("SD Saved");
+  } else {
+    Serial.println("Failed to open game_log.txt");
   }
 }
 
 // 사용법: sendResult("LED", 95.5, 20.3);
 void sendResult(String type, float score, float playTime) {
-  String data = type + "," + String(score, 1) + "," + String(playTime, 1);  // 데이터 합치기 (예: "LED,95.5,20.3")
-  Serial1.println(data);                                                    // NodeMCU로 전송 (Serial1 사용)
+  String data = type + "," + String(score, 1) + "," + String(playTime, 1);
+  
+  // 1. NodeMCU로 전송 (중요: println을 써야 줄바꿈 문자가 가서 NodeMCU가 인식함)
+  Serial1.println(data); 
 
-  Serial.print("NodeMCU 전송 완료 : ");
+  Serial.print("Uploaded to NodeMCU : ");
   Serial.println(data);
 }
 
@@ -207,11 +241,12 @@ void LED_game() {
         lcd.print(score);
 
         // LED 게임 결과 저장 및 전송
-        saveToSD("LED", score, playTime);
         sendResult("LED", score, playTime);
+        saveToSD("LED", score, playTime);
 
         // 15번핀 버튼 눌릴 때 까지 기다림
-        while (!button_ifclicked(1));
+        while (!button_ifclicked(1))
+          ;
 
         LED_finish = 1;    // 게임 끝내기
         mode = MODE_MENU;  // 메뉴로 돌아가기
@@ -291,8 +326,7 @@ void rhythm_game() {
       }
 
       float avg_error = error_sum/rhythm_num;
-      float rhythm_score = constrain(100.0 - (avg_error / 5.0), 0.0, 100.0);
-      
+      float score = constrain(100.0 - (avg_error / 5.0), 0.0, 100.0);
       Serial.print("AVG ERROR: ");
       Serial.println(avg_error);
       Serial.println();
@@ -304,8 +338,8 @@ void rhythm_game() {
       lcd.print(avg_error);
 
       // 임의로 데이터 저장 및 전송
-      saveToSD("RHYTHM", rhythm_score, 1);
-      sendResult("RHYTHM", rhythm_score, 1);
+      sendResult("RHYTHM", avg_error, 1);
+      saveToSD("RHYTHM", avg_error, 1);
 
       // 15번핀 버튼 눌릴 때 까지 기다림
       while (!button_ifclicked(1));
@@ -360,32 +394,5 @@ void loop() {
     case MODE_RHYTHM:
       rhythm_game();
       break;
-  }
-
-  // NodeMCU로부터 데이터 요청이 왔는지 감시
-  if (Serial1.available()) {
-    char cmd = Serial1.read();
-    
-    // 'R' (Read) 명령이 오면
-    if (cmd == 'R') {
-      Serial.println("[Command] Request Log Data...");
-      
-      // SD카드 파일 열기
-      File dataFile = SD.open("game_log.txt");
-      
-      if (dataFile) {
-        // 파일의 끝까지 읽어서 NodeMCU로 한 글자씩 전송
-        while (dataFile.available()) {
-          Serial1.write(dataFile.read()); 
-        }
-        dataFile.close();
-        
-        // 다 보냈다는 신호로 끝에 특수문자 하나 보냄 (선택사항, 여기선 줄바꿈으로 대체)
-        Serial1.println(); 
-        Serial.println("[Command] Send Complete.");
-      } else {
-        Serial.println("[Error] File Open Failed");
-      }
-    }
   }
 }
