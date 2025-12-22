@@ -1,0 +1,447 @@
+<!--NodeMCU : 서버-->
+<!--SD카드 : DB-->
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BLINK_web service (SD Card)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { 
+            background-color: #f4f7f6; 
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            color: #333; 
+        }
+        .container { max-width: 1000px; margin: 0 auto; }
+        
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 20px; font-size: 1.8rem; }
+
+        /* 1. 진단 메시지 카드 */
+        .diagnosis-card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            margin-bottom: 30px;
+            border-left: 10px solid #ccc;
+            transition: all 0.3s ease;
+        }
+        .diagnosis-title { font-size: 1.6em; font-weight: bold; margin-bottom: 10px; }
+        .diagnosis-text { font-size: 1.1em; line-height: 1.6; color: #555; }
+        .recommendation { 
+            margin-top: 15px; 
+            padding: 15px; 
+            background-color: #f8f9fa; 
+            border-radius: 8px; 
+            font-weight: bold; 
+            color: #444; 
+            display: inline-block;
+            border: 1px solid #eee;
+        }
+
+        /* 2. 랜덤 데이터 생성 */
+        .control-panel { 
+            text-align: center; 
+            margin-bottom: 30px; 
+            padding: 20px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+        }
+        .control-title { margin-bottom: 15px; font-size: 0.95em; color: #666; font-weight: bold; }
+        
+        .date-picker {
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            margin-right: 10px;
+            font-family: inherit;
+        }
+
+        button {
+            padding: 12px 20px; 
+            font-size: 15px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            color: white; 
+            font-weight: bold; 
+            margin: 5px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1); 
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.98); }
+        .btn-led { background: linear-gradient(135deg, #FF6384, #d63c5e); }
+        .btn-rhythm { background: linear-gradient(135deg, #36A2EB, #258cd1); }
+
+        /* 3. 그래프 레이아웃 */
+        .chart-container { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 15px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            margin-bottom: 20px; 
+        }
+        .chart-title { text-align: center; font-weight: bold; margin-bottom: 15px; color: #555; }
+        .row { display: flex; gap: 20px; }
+        .col { flex: 1; }
+        @media (max-width: 768px) { .row { flex-direction: column; } }
+
+        /* 4. 데이터 로그 테이블 */
+        .table-container {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05); 
+            margin-bottom: 30px; 
+            overflow-x: auto; 
+        }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 12px; text-align: center; border-bottom: 1px solid #eee; }
+        th { background-color: #f8f9fa; color: #555; font-weight: bold; }
+        tr:hover { background-color: #f1f1f1; } 
+    
+        .type-led { color: #FF6384; font-weight: bold; }
+        .type-rhythm { color: #36A2EB; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>[오늘의 분석 보고서]</h1>
+
+    <div id="ai-message-box" class="diagnosis-card">
+        <div class="diagnosis-title">데이터 분석 대기 중...</div>
+        <div class="diagnosis-text">로딩 중이거나 기록이 없습니다.<br>게임을 진행하고 오늘의 상태를 확인해보세요!</div>
+    </div>
+
+    <div class="chart-container">
+        <div class="chart-title">일별 평균 정확도 추이 (%)</div>
+        <canvas id="accuracyChart"></canvas>
+    </div>
+
+    <div class="row">
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#FF6384;">LED 반응 속도 (초)</div>
+            <canvas id="ledTimeChart"></canvas>
+        </div>
+        <div class="col chart-container">
+            <div class="chart-title" style="color:#36A2EB;">박자 게임 소요 시간 (초)</div>
+            <canvas id="rhythmTimeChart"></canvas>
+        </div>
+    </div>
+
+    <div class="control-panel">
+        <div class="control-title">하드웨어 오류 대비 시뮬레이션 (화면 갱신용)</div>
+        <input type="date" id="sim-date" class="date-picker">
+        <br><br>
+        <button class="btn-led" onclick="simulateGame('LED')">LED 게임 기록 추가</button>
+        <button class="btn-rhythm" onclick="simulateGame('RHYTHM')">박자 게임 기록 추가</button>
+    </div>
+
+    <div class="table-container">
+        <div class="chart-title">게임 기록 (최근 10개)</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>시간</th>
+                    <th>게임 종류</th>
+                    <th>정확도</th>
+                    <th>소요 시간</th>
+                </tr>
+            </thead>
+            <tbody id="logTableBody">
+                </tbody>
+        </table>
+    </div>
+
+</div>
+
+<script>
+    // --- [A] 전역 변수 설정 ---
+    let allLogs = []; // 로드된 모든 데이터를 저장할 배열
+
+    // 날짜 선택기 기본값을 오늘로 설정
+    document.getElementById('sim-date').valueAsDate = new Date();
+
+    // --- [B] 차트 초기화 (Chart.js) ---
+    const accCtx = document.getElementById('accuracyChart').getContext('2d');
+    const accuracyChart = new Chart(accCtx, {
+        type: 'line',
+        data: { labels: [], datasets: [
+            { label: 'LED 정확도', borderColor: '#FF6384', backgroundColor: '#FF6384', data: [], tension: 0.3, pointRadius: 5 },
+            { label: '박자 정확도', borderColor: '#36A2EB', backgroundColor: '#36A2EB', data: [], tension: 0.3, pointRadius: 5 }
+        ]},
+        options: { responsive: true, scales: { y: { min: 0, max: 100 } } }
+    });
+
+    const ledTimeCtx = document.getElementById('ledTimeChart').getContext('2d');
+    const ledTimeChart = new Chart(ledTimeCtx, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: '반응 시간', backgroundColor: '#FF6384', data: [] }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+
+    const rhythmTimeCtx = document.getElementById('rhythmTimeChart').getContext('2d');
+    const rhythmTimeChart = new Chart(rhythmTimeCtx, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: '소요 시간', backgroundColor: '#36A2EB', data: [] }] },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+    });
+
+
+    // --- [C] 데이터 로드 및 파싱 (핵심 변경 부분) ---
+    async function loadData() {
+        try {
+            // NodeMCU의 /api/data 엔드포인트 호출
+            const response = await fetch('/api/data');
+            if (!response.ok) throw new Error("No data file or Server Error");
+            
+            const text = await response.text();
+            
+            // CSV 텍스트 파싱 (형식: timestamp,game_type,accuracy,play_time)
+            const lines = text.trim().split('\n');
+            allLogs = []; // 초기화
+
+            lines.forEach(line => {
+                const parts = line.split(',');
+                if (parts.length >= 4) {
+                    allLogs.push({
+                        timestamp: parseInt(parts[0]), // ms 단위 타임스탬프
+                        game_type: parts[1].trim(),    // "LED" or "RHYTHM"
+                        accuracy: parseFloat(parts[2]),
+                        play_time: parseFloat(parts[3])
+                    });
+                }
+            });
+
+            // 데이터 처리 및 그래프 그리기
+            updateDashboard(allLogs);
+
+        } catch (error) {
+            console.warn("데이터 로드 실패 (아직 기록이 없거나 연결 문제):", error);
+            // 에러 시 빈 화면 유지 혹은 더미 데이터 테스트 가능
+            // updateDashboard([]); 
+        }
+    }
+
+    // --- [D] 데이터 가공 및 화면 갱신 (기존 로직 유지) ---
+    function updateDashboard(dataArray) {
+        if (!dataArray || dataArray.length === 0) return;
+
+        // 1. 날짜별 그룹화
+        let dailyGroups = {};
+        let stats = {
+            LED: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] },
+            RHYTHM: { historyAcc: [], historyTime: [], todayAcc: [], todayTime: [] }
+        };
+
+        const today = new Date();
+        today.setHours(0,0,0,0); 
+
+        // 시간순 정렬
+        const sortedLogs = dataArray.sort((a, b) => a.timestamp - b.timestamp);
+
+        // 최근 기록 10개 테이블 표시
+        const recentLogs = sortedLogs.slice().reverse().slice(0, 10);
+        updateLogTable(recentLogs);
+
+        sortedLogs.forEach(log => {
+            const logDate = new Date(log.timestamp);
+            const dateKey = `${logDate.getMonth()+1}/${logDate.getDate()}`;
+            
+            // 그래프용 그룹화
+            if (!dailyGroups[dateKey]) {
+                dailyGroups[dateKey] = { 
+                    LED: { accSum: 0, timeSum: 0, count: 0 }, 
+                    RHYTHM: { accSum: 0, timeSum: 0, count: 0 } 
+                };
+            }
+            const group = dailyGroups[dateKey][log.game_type];
+            if (group) {
+                group.accSum += log.accuracy;
+                group.timeSum += log.play_time;
+                group.count += 1;
+            }
+
+            // 진단용 통계 (오늘 vs 과거)
+            const isToday = logDate >= today;
+            if (stats[log.game_type]) {
+                const targetAcc = isToday ? stats[log.game_type].todayAcc : stats[log.game_type].historyAcc;
+                const targetTime = isToday ? stats[log.game_type].todayTime : stats[log.game_type].historyTime;
+                targetAcc.push(log.accuracy);
+                targetTime.push(log.play_time);
+            }
+        });
+
+        // 평균 계산 및 차트 데이터 준비
+        let chartLabels = Object.keys(dailyGroups);
+        let accLedAvg = [], accRhythmAvg = [];
+        let timeLedAvg = [], timeRhythmAvg = [];
+
+        chartLabels.forEach(date => {
+            const dayData = dailyGroups[date];
+            
+            // LED
+            if (dayData.LED.count > 0) {
+                accLedAvg.push((dayData.LED.accSum / dayData.LED.count).toFixed(1));
+                timeLedAvg.push((dayData.LED.timeSum / dayData.LED.count).toFixed(1));
+            } else {
+                accLedAvg.push(null);
+                timeLedAvg.push(null);
+            }
+            // Rhythm
+            if (dayData.RHYTHM.count > 0) {
+                accRhythmAvg.push((dayData.RHYTHM.accSum / dayData.RHYTHM.count).toFixed(1));
+                timeRhythmAvg.push((dayData.RHYTHM.timeSum / dayData.RHYTHM.count).toFixed(1));
+            } else {
+                accRhythmAvg.push(null);
+                timeRhythmAvg.push(null);
+            }
+        });
+
+        // 차트 업데이트
+        accuracyChart.data.labels = chartLabels;
+        accuracyChart.data.datasets[0].data = accLedAvg;
+        accuracyChart.data.datasets[1].data = accRhythmAvg;
+        accuracyChart.update();
+
+        ledTimeChart.data.labels = chartLabels;
+        ledTimeChart.data.datasets[0].data = timeLedAvg;
+        ledTimeChart.update();
+
+        rhythmTimeChart.data.labels = chartLabels;
+        rhythmTimeChart.data.datasets[0].data = timeRhythmAvg;
+        rhythmTimeChart.update();
+
+        // 진단 실행
+        runDiagnosis(stats);
+    }
+
+    // 평균 헬퍼 함수
+    const getAvg = (arr) => arr.length ? (arr.reduce((a,b)=>a+b,0) / arr.length) : 0;
+
+    // --- [E] 컨디션 진단 로직 (기존 동일) ---
+    function runDiagnosis(stats) {
+        const msgBox = document.getElementById('ai-message-box');
+        const title = msgBox.querySelector('.diagnosis-title');
+        const text = msgBox.querySelector('.diagnosis-text');
+
+        if (stats.LED.todayAcc.length === 0 && stats.RHYTHM.todayAcc.length === 0) {
+            title.innerHTML = "오늘의 기록을 기다리는 중...";
+            text.innerHTML = "오늘의 게임을 진행해 주세요.";
+            msgBox.style.borderLeftColor = "#ccc"; 
+            msgBox.style.backgroundColor = "#fff";
+            return;
+        }
+
+        const getScore = (today, history, isTime) => {
+            const baseVal = history || (isTime ? 30 : 70);
+            if (isTime) return today <= baseVal ? 1 : 0;
+            return today >= baseVal ? 1 : 0;
+        };
+
+        const todayLedAcc = getAvg(stats.LED.todayAcc);
+        const todayLedTime = getAvg(stats.LED.todayTime);
+        const todayBeatAcc = getAvg(stats.RHYTHM.todayAcc);
+        const todayBeatTime = getAvg(stats.RHYTHM.todayTime);
+
+        const L_Acc = getScore(todayLedAcc, getAvg(stats.LED.historyAcc), false);
+        const L_Time = getScore(todayLedTime, getAvg(stats.LED.historyTime), true);
+        const B_Acc = getScore(todayBeatAcc, getAvg(stats.RHYTHM.historyAcc), false);
+        const B_Time = getScore(todayBeatTime, getAvg(stats.RHYTHM.historyTime), true);
+
+        const totalScore = L_Acc + L_Time + B_Acc + B_Time;
+        const accScore = L_Acc + B_Acc;
+        const timeScore = L_Time + B_Time;
+
+        if (totalScore >= 3) {
+            title.innerHTML = "🌟 최상의 컨디션 🌟";
+            text.innerHTML = `몸도 마음도 청춘이시네요!<br><div class='recommendation'>추천 활동: 가벼운 산책을 하시거나 바둑/장기를 한 판 둬보세요!</div>`;
+            msgBox.style.borderLeftColor = "#4CAF50"; 
+            msgBox.style.backgroundColor = "#E8F5E9";
+        } else if (totalScore === 0) {
+            title.innerHTML = "😴 휴식이 필요한 하루";
+            text.innerHTML = `오늘 몸이 무거우시진 않으신가요?<br><div class='recommendation'>추천 활동: 무리하지 마시고 따뜻한 차와 함께 휴식을 취해보세요.</div>`;
+            msgBox.style.borderLeftColor = "#F44336"; 
+            msgBox.style.backgroundColor = "#FFEBEE";
+        } else if (accScore === 2 && timeScore === 0) {
+            title.innerHTML = "🐢 신중한 하루 🐢";
+            text.innerHTML = `나비처럼 날아 벌처럼 쏜다!<br><div class='recommendation'>추천 활동: 굳은 몸을 풀어주는 스트레칭이 필요해요. 기지개를 한번 시원하게 켜볼까요?</div>`;
+            msgBox.style.borderLeftColor = "#FF9800"; 
+            msgBox.style.backgroundColor = "#FFF3E0";
+        } else if (timeScore === 2 && accScore === 0) {
+            title.innerHTML = "⚡ 조급한 하루 ⚡";
+            text.innerHTML = `틀려도 괜찮아요! 평온한 마음을 가져보세요.<br><div class='recommendation'>추천 활동: 차분한 음악과 함께 옛날 사진첩을 찬찬히 넘겨보며 추억 여행을 떠나보세요.</div>`;
+            msgBox.style.borderLeftColor = "#9C27B0"; 
+            msgBox.style.backgroundColor = "#F3E5F5";
+        } else {
+            title.innerHTML = "🙂 평온한 하루 🙂";
+            text.innerHTML = `오늘도 한결같이 건강한 모습이시군요!<br><div class='recommendation'>추천 활동: 가족이나 친구에게 전화해 반가운 목소리를 들어보세요.</div>`;
+            msgBox.style.borderLeftColor = "#2196F3"; 
+            msgBox.style.backgroundColor = "#E3F2FD";
+        }
+    }
+
+    // --- [F] 로컬 시뮬레이션 (SD카드 전송 X, 화면 테스트용) ---
+    window.simulateGame = function(type) {
+        let baseTime = type === "LED" ? 20 : 45;
+        let finalTime = baseTime + (Math.random() * 20 - 5);
+        let acc = (50 + Math.random() * 50).toFixed(1);
+
+        const dateInput = document.getElementById('sim-date').value;
+        const selectedDate = new Date(dateInput);
+        
+        const randomHour = Math.floor(Math.random() * 12) + 9;
+        const randomMin = Math.floor(Math.random() * 60);
+        selectedDate.setHours(randomHour, randomMin, 0);
+
+        // 로컬 배열에만 추가 (서버 전송 없음)
+        const newLog = {
+            game_type: type,
+            accuracy: parseFloat(acc),
+            play_time: parseFloat(finalTime.toFixed(1)),
+            timestamp: selectedDate.getTime()
+        };
+
+        allLogs.push(newLog); // 로컬 데이터에 추가
+        updateDashboard(allLogs); // 화면 갱신
+        
+        alert("시뮬레이션 데이터가 화면에 추가되었습니다.\n(참고: 이 데이터는 새로고침하면 사라지며 SD카드에 저장되지 않습니다.)");
+    }
+
+    // --- [G] 테이블 렌더링 함수 ---
+    function updateLogTable(logs) {
+        const tbody = document.getElementById('logTableBody');
+        tbody.innerHTML = ""; 
+
+        logs.forEach(log => {
+            const date = new Date(log.timestamp);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dateStr = `${date.getMonth()+1}/${date.getDate()}`;
+            const typeClass = log.game_type === "LED" ? "type-led" : "type-rhythm";
+            const typeName = log.game_type === "LED" ? "LED 게임" : "박자 게임";
+
+            const row = `
+                <tr>
+                    <td>${dateStr} ${timeStr}</td>
+                    <td class="${typeClass}">${typeName}</td>
+                    <td>${log.accuracy}%</td>
+                    <td>${log.play_time}초</td>
+                </tr>
+            `;
+            tbody.innerHTML += row;
+        });
+    }
+
+    // 페이지 로드 시 데이터 가져오기 실행
+    window.onload = loadData;
+
+</script>
+</body>
+</html>
