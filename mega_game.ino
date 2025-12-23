@@ -27,7 +27,7 @@ int* p = my_button_click;
 int error_sum = 0;
 float average_error = 0;
 
-const int sequence_num = 4;
+int sequence_num = 4;
 const int rhythm_num = 5;
 
 //delay를 사용할 시, 센서 감지, 연산 등에서 오류 발생 가능성이 많기에
@@ -146,7 +146,7 @@ Timer button_timer1(0, 10000);
 // [게임 결과 저장 및 전송]
 
 // SD카드에 저장
-void saveToSD(String type, float score, float playTime) {
+void saveToSD(String type, int score, int level) {
   // "game_log.txt"에 저장 (없으면 알아서 만듦)
   File dataFile = SD.open("game_log.txt", FILE_WRITE);
 
@@ -154,9 +154,9 @@ void saveToSD(String type, float score, float playTime) {
     // 형식: LED,scroe,playTime
     dataFile.print(type);
     dataFile.print(",");
-    dataFile.print(score, 1);
+    dataFile.print(score);
     dataFile.print(",");
-    dataFile.println(playTime, 1);
+    dataFile.println(level);
 
     dataFile.close();
     Serial.println("SD Saved");
@@ -176,11 +176,48 @@ void sendResult(String type, float score, float playTime) {
   Serial.println(data);
 }
 
+int difficulty_count[256];
+int Difficulty(){
+  memset(difficulty_count, 0, sizeof(difficulty_count));
+  File myFile = SD.open("game_log.txt"); // 파일 열기
+  if (myFile) {
+    while (myFile.available()) {
+      String line = myFile.readStringUntil('\n');
+      line.trim();
+      if (line.length() > 0) {
+        int firstComma = line.indexOf(',');
+        int secondComma = line.indexOf(',', firstComma + 1);
+
+        if (firstComma != -1 && secondComma != -1) {
+          // 데이터 파싱
+          String gameName = line.substring(0, firstComma);          // "게임명"
+          String scoreStr = line.substring(firstComma + 1, secondComma); // 스코어 부분
+          String levelStr = line.substring(secondComma + 1); // 전단계 부분
+
+          // 숫자 변환 및 저장
+          int gameScore = scoreStr.toInt();
+          int lastLevel = levelStr.toInt();
+
+          if ( gameScore/lastLevel == 20 ) difficulty_count[lastLevel-4]++;
+        }
+      }
+    }
+    myFile.close();
+  } else {
+    Serial.println("setting.txt 파일을 열 수 없습니다.");
+  }
+}
+
 // [게임 로직]
 
 // LED GAME
 // ex) 3121 = 11 9 10 9
 void LED_game() {
+  Difficulty();
+  int i;
+  for (i = 0; difficulty_count[i] >= 3; i++);
+  sequence_num = i+4;
+
   int onoff = 0;
   int finish = 0;
   int LED_score = 0, my_count = 0, LED_finish = 0;
@@ -229,7 +266,7 @@ void LED_game() {
           if (sequence[i] == my_button_click[i]) LED_score++;  // 맞춘 개수 저장
         }
 
-        float score = (float)LED_score / sequence_num * 100;  // 점수 계산
+        float score = (float)LED_score * 20;  // 점수 계산
         Serial.print("YOUR SCORE: ");
         Serial.println(score);
         Serial.println();
@@ -242,7 +279,7 @@ void LED_game() {
 
         // LED 게임 결과 저장 및 전송
         sendResult("LED", score, playTime);
-        saveToSD("LED", score, playTime);
+        saveToSD("LED", score, sequence_num);
 
         // 15번핀 버튼 눌릴 때 까지 기다림
         while (!button_ifclicked(1))
@@ -339,7 +376,6 @@ void rhythm_game() {
 
       // 임의로 데이터 저장 및 전송
       sendResult("RHYTHM", avg_error, 1);
-      saveToSD("RHYTHM", avg_error, 1);
 
       // 15번핀 버튼 눌릴 때 까지 기다림
       while (!button_ifclicked(1));
